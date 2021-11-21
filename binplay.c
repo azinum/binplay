@@ -17,6 +17,7 @@
 #define MAX_FILE_SIZE     512
 #define FRAMES_PER_BUFFER 512
 #define SAMPLE_RATE       44100
+#define SAMPLE_SIZE       2
 #define CHANNEL_COUNT     2
 
 #define NoError (0)
@@ -29,12 +30,17 @@ typedef uint16_t u16;
 typedef int8_t i8;
 typedef uint8_t u8;
 
+#define BUFFER_MEMORY (FRAMES_PER_BUFFER * CHANNEL_COUNT * SAMPLE_SIZE)
+
+u8 temp_buffer[BUFFER_MEMORY] = {0};
+
 typedef struct Binplay {
   FILE* fp;
   u32 file_size;
-  u32 file_cursor;
   u32 frames_per_buffer;
   u32 sample_rate;
+  u16 channel_count;
+  void* output_buffer;
 } Binplay;
 
 Binplay binplay = {0};
@@ -117,9 +123,10 @@ i32 binplay_init(Binplay* b, const char* path) {
   fseek(b->fp, 0, SEEK_END);
   b->file_size = ftell(b->fp);
   fseek(b->fp, 0, SEEK_SET);
-  b->file_cursor = 0;
   b->frames_per_buffer = FRAMES_PER_BUFFER;
   b->sample_rate = SAMPLE_RATE;
+  b->channel_count = CHANNEL_COUNT;
+  b->output_buffer = &temp_buffer[0];
   return NoError;
 }
 
@@ -181,9 +188,16 @@ i32 binplay_start_stream(Binplay* b) {
 i32 binplay_process_audio(void* output) {
   Binplay* b = &binplay;
   i16* buffer = (i16*)output;
-  for (u32 i = 0; i < b->frames_per_buffer; ++i) {
-    *buffer++ = 0;
-    *buffer++ = 0;
+
+  i16* file_buffer = b->output_buffer;
+  const u32 bytes_to_read = BUFFER_MEMORY;
+  u32 bytes_read = fread(file_buffer, 1, bytes_to_read, b->fp);
+  for (u32 i = 0; i < b->frames_per_buffer * b->channel_count; ++i) {
+    *buffer++ = *file_buffer++;
+  }
+  if (bytes_read < bytes_to_read) {
+    printf("END\n");
+    return Error; // NOTE(lucas): Error just means we are done reading the file buffer, and thus should exit
   }
   return NoError;
 }
