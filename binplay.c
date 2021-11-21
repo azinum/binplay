@@ -60,13 +60,11 @@ i32 main(i32 argc, char** argv) {
   if (rebuild_program()) {
     return 0;
   }
-#if 0
   if (argc <= 1) {
     fprintf(stdout, "USAGE:\n  ./%s <filename>\n", PROG);
     return 0;
   }
-#endif
-  if (binplay_init(&binplay, "audio.wav") == NoError) {
+  if (binplay_init(&binplay, argv[1]) == NoError) {
     if (binplay_open_stream(&binplay) == NoError) {
       binplay_start_stream(&binplay);
       fprintf(stdout, "Press ENTER to exit\n");
@@ -98,7 +96,7 @@ i32 rebuild_program() {
   // Negative time diffs means that the executable file is up to date to the source code
   if (time_diff > 0) {
     exec_command("set -xe");
-    exec_command("%s %s.c -o %s %s && ./%s", CC, PROG, PROG, C_FLAGS, PROG);
+    exec_command("%s %s.c -o %s %s && ./%s audio.wav", CC, PROG, PROG, C_FLAGS, PROG);
     return 1;
   }
   return 0;

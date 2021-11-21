@@ -12,7 +12,7 @@ clean:
 	rm -d ${PROG}
 
 run:
-	./${PROG}
+	./${PROG} audio.wav
 
 install:
 	chmod o+x ${PROG}
