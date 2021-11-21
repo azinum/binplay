@@ -1,12 +1,22 @@
 # Makefile
 
+PROG=binplay
+INSTALL_PATH=/usr/local/bin
+
 all: bootstrap run
 
 bootstrap:
-	@[ -f binplay ] || ./bootstrap.sh
+	@[ -f ${PROG} ] || ./bootstrap.sh
 
 clean:
-	rm -d binplay
+	rm -d ${PROG}
 
 run:
-	./binplay
+	./${PROG}
+
+install:
+	chmod o+x ${PROG}
+	cp ${PROG} ${INSTALL_PATH}
+
+uninstall:
+	rm ${INSTALL_PATH}/${PROG}
