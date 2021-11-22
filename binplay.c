@@ -24,8 +24,8 @@
 #define FRAMES_PER_BUFFER 512
 #define SAMPLE_RATE       44100
 #define SAMPLE_SIZE       2
-#define CHANNEL_COUNT     2
-#define CURSOR_SPEED      10 * SAMPLE_SIZE * SAMPLE_SIZE * CHANNEL_COUNT
+#define CHANNEL_COUNT     4
+#define CURSOR_SPEED      5 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT
 
 #define NoError (0)
 #define Error (-1)
@@ -125,11 +125,11 @@ i32 main(i32 argc, char** argv) {
                 if (a[0] == 91) {
                   // Left
                   if (a[1] == 68) {
-                    b->file_cursor -= b->sample_rate;
+                    b->file_cursor -= CURSOR_SPEED;
                   }
                   // Right
                   else if (a[1] == 67) {
-                    b->file_cursor += b->sample_rate;
+                    b->file_cursor += CURSOR_SPEED;
                   }
                   b->file_cursor = CLAMP(b->file_cursor, 0, (i32)b->file_size);
                 }
