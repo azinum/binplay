@@ -17,19 +17,11 @@
 #define CC "gcc"
 #define C_FLAGS "-Wall -O3 -pedantic -lportaudio"
 
-// These will be customizable by the user later
-#define MAX_COMMAND_SIZE  512
-#define MAX_FILE_SIZE     512
-
-#define FRAMES_PER_BUFFER 512
-#define SAMPLE_RATE       44100
-#define SAMPLE_SIZE       2
-#define CHANNEL_COUNT     4
-#define CURSOR_SPEED      5 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT
-
 #define NoError (0)
 #define Error (-1)
 
+typedef double f64;
+typedef float f32;
 typedef int32_t i32;
 typedef uint32_t u32;
 typedef int16_t i16;
@@ -37,23 +29,35 @@ typedef uint16_t u16;
 typedef int8_t i8;
 typedef uint8_t u8;
 
+// These will be customizable by the user later
+#define MAX_COMMAND_SIZE  512
+#define MAX_FILE_SIZE     512
+
+#define FRAMES_PER_BUFFER 512
+#define SAMPLE_RATE       44100
+#define SAMPLE_SIZE       2
+#define CHANNEL_COUNT     2
+
+#define OUTPUT_BUFFER_SIZE (FRAMES_PER_BUFFER * SAMPLE_RATE * SAMPLE_SIZE)
+
+i32 g_frames_per_buffer = 512;
+i32 g_sample_rate = SAMPLE_RATE;
+i32 g_sample_size = 2;
+f32 g_volume = 1.0f;
+i32 g_cursor_speed = 5 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT;
+i32 g_loop_after_complete = 1;
+
 #define CLAMP(V, MIN, MAX) (V > MAX) ? (MAX) : ((V < MIN) ? (MIN) : (V))
-
-#define BUFFER_MEMORY (FRAMES_PER_BUFFER * CHANNEL_COUNT * SAMPLE_SIZE)
-
-u8 temp_buffer[BUFFER_MEMORY] = {0};
 
 typedef struct Binplay {
   FILE* fp;
   const char* file_name;
   u32 file_size;
   i32 file_cursor;
-  u32 frames_per_buffer;
-  u32 sample_rate;
-  u16 channel_count;
   u8 done;
   u8 play;
-  void* output_buffer;
+  u8* output_buffer;
+  u32 output_buffer_size;
 } Binplay;
 
 Binplay binplay = {0};
@@ -125,13 +129,22 @@ i32 main(i32 argc, char** argv) {
                 if (a[0] == 91) {
                   // Left
                   if (a[1] == 68) {
-                    b->file_cursor -= CURSOR_SPEED;
+                    b->file_cursor -= g_cursor_speed;
                   }
                   // Right
                   else if (a[1] == 67) {
-                    b->file_cursor += CURSOR_SPEED;
+                    b->file_cursor += g_cursor_speed;
                   }
                   b->file_cursor = CLAMP(b->file_cursor, 0, (i32)b->file_size);
+                  // Up
+                  if (a[1] == 65) {
+                    g_volume += 0.05f;
+                  }
+                  // Down
+                  else if (a[1] == 66) {
+                    g_volume -= 0.05f;
+                  }
+                  g_volume = CLAMP(g_volume, 0.0f, 1.0f);
                 }
               }
               break;
@@ -174,12 +187,11 @@ i32 rebuild_program() {
   time_t time_diff = source_stat.st_ctime - bin_stat.st_ctime;
 
   // Negative time diffs means that the executable file is up to date to the source code
-  if (time_diff > 0) {
-    exec_command("set -xe");
-    exec_command("%s %s.c -o %s %s", CC, PROG, PROG, C_FLAGS);
-    return 1;
+  if (time_diff < 0) {
+    return 0;
   }
-  return 0;
+  exec_command("%s %s.c -o %s %s", CC, PROG, PROG, C_FLAGS);
+  return 1;
 }
 
 void exec_command(const char* fmt, ...) {
@@ -189,6 +201,7 @@ void exec_command(const char* fmt, ...) {
   vsnprintf(command, MAX_COMMAND_SIZE, fmt, args);
   va_end(args);
 
+  fprintf(stdout, "+ %s\n", command); // To simulate 'set -xe'
   FILE* fp = popen(command, "w");
   fclose(fp);
 }
@@ -210,15 +223,17 @@ void display_info(Binplay* b) {
 
   fprintf(fp,
     "\n"
+    "Volume: %i%%\n"
+    "Channel count: %u\n"
     "Sample rate: %u\n"
     "Sample size: %u\n"
     "Frames per buffer: %u\n"
-    "Channel count: %u\n"
     ,
-    b->sample_rate,
+    (i32)(100 * g_volume),
+    CHANNEL_COUNT,
+    g_sample_rate,
     SAMPLE_SIZE,
-    b->frames_per_buffer,
-    b->channel_count
+    g_frames_per_buffer
   );
 }
 
@@ -232,12 +247,13 @@ i32 binplay_init(Binplay* b, const char* path) {
   b->file_size = ftell(b->fp);
   fseek(b->fp, 0, SEEK_SET);
   b->file_cursor = 0;
-  b->frames_per_buffer = FRAMES_PER_BUFFER;
-  b->sample_rate = SAMPLE_RATE;
-  b->channel_count = CHANNEL_COUNT;
   b->done = 0;
   b->play = 1;
-  b->output_buffer = &temp_buffer[0];
+  b->output_buffer = malloc(OUTPUT_BUFFER_SIZE);
+  if (!b->output_buffer) {
+    return Error;
+  }
+  b->output_buffer_size = OUTPUT_BUFFER_SIZE;
   return NoError;
 }
 
@@ -263,7 +279,7 @@ i32 binplay_open_stream(Binplay* b) {
   output_port.suggestedLatency = Pa_GetDeviceInfo(output_port.device)->defaultHighOutputLatency;
   output_port.hostApiSpecificStreamInfo = NULL;
 
-  if ((err = Pa_IsFormatSupported(NULL, &output_port, b->sample_rate)) != paFormatIsSupported) {
+  if ((err = Pa_IsFormatSupported(NULL, &output_port, g_sample_rate)) != paFormatIsSupported) {
     fprintf(stderr, "PortAudio Error: %s\n", Pa_GetErrorText(err));
     return Error;
   }
@@ -272,8 +288,8 @@ i32 binplay_open_stream(Binplay* b) {
     &stream,
     NULL,
     &output_port,
-    b->sample_rate,
-    b->frames_per_buffer,
+    g_sample_rate,
+    g_frames_per_buffer,
     paNoFlag,
     stereo_callback,
     NULL
@@ -300,18 +316,17 @@ i32 binplay_process_audio(void* output) {
   Binplay* b = &binplay;
   i16* buffer = (i16*)output;
 
-  i16* file_buffer = b->output_buffer;
+  i16* file_buffer = (i16*)b->output_buffer;
   if (b->play) {
-    const u32 bytes_to_read = BUFFER_MEMORY;
+    const u32 bytes_to_read = g_frames_per_buffer * g_sample_size * CHANNEL_COUNT;
     fseek(b->fp, b->file_cursor, SEEK_SET);
     u32 bytes_read = fread(file_buffer, 1, bytes_to_read, b->fp);
-    for (u32 i = 0; i < b->frames_per_buffer * b->channel_count; ++i) {
-      *buffer++ = *file_buffer++;
+    for (u32 i = 0; i < g_frames_per_buffer * CHANNEL_COUNT; ++i) {
+      *buffer++ = (i16)(g_volume * file_buffer[i]);
     }
-    b->file_cursor += b->frames_per_buffer * b->channel_count * SAMPLE_SIZE;
+    b->file_cursor += g_frames_per_buffer * g_sample_size * CHANNEL_COUNT;
     if (bytes_read < bytes_to_read || b->file_cursor >= b->file_size) {
-#define SHOULD_LOOP_AFTER_COMPLETE 1 // TODO(lucas): Make this a configurable variable
-      if (SHOULD_LOOP_AFTER_COMPLETE) {
+      if (g_loop_after_complete) {
         b->file_cursor = 0;
       }
       else {
@@ -322,7 +337,7 @@ i32 binplay_process_audio(void* output) {
     }
   }
   else {
-    for (u32 i = 0; i < b->frames_per_buffer * b->channel_count; ++i) {
+    for (u32 i = 0; i < g_frames_per_buffer * CHANNEL_COUNT; ++i) {
       *buffer++ = 0;
     }
   }
@@ -331,6 +346,8 @@ i32 binplay_process_audio(void* output) {
 
 void binplay_exit(Binplay* b) {
   fclose(b->fp);
+  free(b->output_buffer);
+  b->output_buffer_size = 0;
   Pa_CloseStream(stream);
   Pa_Terminate();
 }
