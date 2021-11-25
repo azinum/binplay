@@ -25,6 +25,16 @@ enum Error_code {
   MAX_ERROR,
 };
 
+enum Keys {
+  KEY_NONE = 0,
+
+  KEY_EXIT = 4, // ^D
+  KEY_END = 'e',
+  KEY_RESET = 'r',
+  KEY_TOGGLE_LOOP = 'l',
+  KEY_TOGGLE_PAUSE = 32,  // Space
+};
+
 typedef double f64;
 typedef float f32;
 typedef int32_t i32;
@@ -360,10 +370,14 @@ void display_info(Binplay* b) {
   FILE* fp = stdout;
   const char* play_status[2] = {
     "",
-    "(PAUSED)",
+    "[paused]",
+  };
+  const char* loop_status[2] = {
+    "",
+    "[looping]",
   };
   fprintf(fp, "Currently playing: %s %s\n", b->file_name, play_status[b->play == 0]);
-  fprintf(fp, "Cursor: [%i/%i] (%i%%)\n", binplay.file_cursor, binplay.file_size, (i32)(100 * ((float)binplay.file_cursor / binplay.file_size)));
+  fprintf(fp, "Cursor: [%i/%i] (%i%%) %s\n", binplay.file_cursor, binplay.file_size, (i32)(100 * ((float)binplay.file_cursor / binplay.file_size)), loop_status[g_loop_after_complete != 0]);
 
   fprintf(fp,
     "\n"
@@ -423,17 +437,20 @@ void binplay_exec(Binplay* b) {
     if (read_size > 0) {
       switch (input) {
         // Spacebar
-        case 32: {
+        case KEY_TOGGLE_PAUSE: {
           b->play = !b->play;
           break;
         }
+        case KEY_TOGGLE_LOOP: {
+          g_loop_after_complete = !g_loop_after_complete;
+          break;
+        }
         // Reset to 0
-        case 'r': {
+        case KEY_RESET: {
           b->file_cursor = 0;
           break;
         }
-        // Go to end
-        case 'e': {
+        case KEY_END: {
           b->file_cursor = b->file_size;
           break;
         }
@@ -466,8 +483,7 @@ void binplay_exec(Binplay* b) {
           }
           break;
         }
-        // Ctrl+D
-        case 4: {
+        case KEY_EXIT: {
           b->done = 1;
           break;
         }
