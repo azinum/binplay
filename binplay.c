@@ -84,6 +84,7 @@ typedef struct Parse_arg {
 i32 g_frames_per_buffer = 512;
 i32 g_sample_rate = SAMPLE_RATE;
 i32 g_sample_size = 2;
+i32 g_channel_count = CHANNEL_COUNT;
 f32 g_volume = 1.0f;
 i32 g_cursor_speed = 5 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT;
 i32 g_loop_after_complete = 1;
@@ -126,6 +127,7 @@ i32 main(i32 argc, char** argv) {
     {0, NULL, "filename", ArgString, 0, &filename},
     {'f', "frames-per-buffer", "number of frames to handle per buffer", ArgInt, 1, &g_frames_per_buffer},
     {'s', "sample-size", "size of each sample in the data buffer", ArgInt, 1, &g_sample_size},
+    {'c', "channel-count", "how many audio channels to use", ArgInt, 1, &g_channel_count},
     {'r', "sample-rate", "number of samples per second", ArgInt, 1, &g_sample_rate},
     {'v', "volume", "startup volume (values between 0.0 and 1.0 give optimal results)", ArgFloat, 1, &g_volume},
   };
@@ -381,16 +383,16 @@ void display_info(Binplay* b) {
 
   fprintf(fp,
     "\n"
-    "Volume: %i%%\n"
-    "Channel count: %u\n"
-    "Sample rate: %u\n"
-    "Sample size: %u\n"
-    "Frames per buffer: %u\n"
+    "Volume: %d%%\n"
+    "Channel count: %d\n"
+    "Sample rate: %d\n"
+    "Sample size: %d\n"
+    "Frames per buffer: %d\n"
     ,
     (i32)(100 * g_volume),
-    CHANNEL_COUNT,
+    g_channel_count,
     g_sample_rate,
-    SAMPLE_SIZE,
+    g_sample_size,
     g_frames_per_buffer
   );
 }
@@ -407,7 +409,7 @@ i32 binplay_init(Binplay* b, const char* path) {
   b->file_cursor = 0;
   b->done = 0;
   b->play = 1;
-  b->output_size = g_frames_per_buffer * g_sample_size * CHANNEL_COUNT;
+  b->output_size = g_frames_per_buffer * g_sample_size * g_channel_count;
   b->output = malloc(b->output_size);
   if (!b->output) {
     b->output_size = 0;
@@ -514,7 +516,7 @@ i32 binplay_open_stream(Binplay* b) {
 
   i32 output_device = Pa_GetDefaultOutputDevice();
   output_port.device = output_device;
-  output_port.channelCount = CHANNEL_COUNT;
+  output_port.channelCount = g_channel_count;
   output_port.sampleFormat = paInt16;
   output_port.suggestedLatency = Pa_GetDeviceInfo(output_port.device)->defaultHighOutputLatency;
   output_port.hostApiSpecificStreamInfo = NULL;
@@ -558,13 +560,13 @@ i32 binplay_process_audio(void* output) {
 
   i16* file_buffer = (i16*)b->output;
   if (b->play) {
-    const u32 bytes_to_read = g_frames_per_buffer * g_sample_size * CHANNEL_COUNT;
+    const u32 bytes_to_read = g_frames_per_buffer * g_sample_size * g_channel_count;
     fseek(b->fp, b->file_cursor, SEEK_SET);
     u32 bytes_read = fread(file_buffer, 1, bytes_to_read, b->fp);
-    for (u32 i = 0; i < g_frames_per_buffer * CHANNEL_COUNT; ++i) {
+    for (u32 i = 0; i < g_frames_per_buffer * g_channel_count; ++i) {
       *buffer++ = (i16)(g_volume * file_buffer[i]);
     }
-    b->file_cursor += g_frames_per_buffer * g_sample_size * CHANNEL_COUNT;
+    b->file_cursor += g_frames_per_buffer * g_sample_size * g_channel_count;
     if (bytes_read < bytes_to_read || b->file_cursor >= b->file_size) {
       if (g_loop_after_complete) {
         b->file_cursor = 0;
@@ -577,7 +579,7 @@ i32 binplay_process_audio(void* output) {
     }
   }
   else {
-    for (u32 i = 0; i < g_frames_per_buffer * CHANNEL_COUNT; ++i) {
+    for (u32 i = 0; i < g_frames_per_buffer * g_channel_count; ++i) {
       *buffer++ = 0;
     }
   }
