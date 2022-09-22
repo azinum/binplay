@@ -33,6 +33,19 @@ enum Keys {
   KEY_RESET = 'r',
   KEY_TOGGLE_LOOP = 'l',
   KEY_TOGGLE_PAUSE = 32,  // Space
+  KEY_TOGGLE_HELP = '\t',   // tab
+
+  MAX_KEY,
+};
+
+static const char* key_code_desc[] = {
+  " KEY          DESCRIPTION",
+  " [^D]       - exit",
+  " [E]        - go to the (e)nd",
+  " [R]        - go to the start and (r)eset",
+  " [L]        - toggle (l)oop",
+  " [SPACEBAR] - toggle pause",
+  " [TAB]      - toggle help menu",
 };
 
 typedef double f64;
@@ -96,6 +109,7 @@ typedef struct Binplay {
   i32 file_cursor;
   u8 done;
   u8 play;
+  u8 show_help;
   u32 output_size;
   u8* output;
 } Binplay;
@@ -395,6 +409,12 @@ void display_info(Binplay* b) {
     g_sample_size,
     g_frames_per_buffer
   );
+  if (b->show_help) {
+    fprintf(fp, "\nHELP MENU\n");
+    for (u32 i = 0; i < ARR_SIZE(key_code_desc); ++i) {
+      fprintf(fp, "  %s\n", key_code_desc[i]);
+    }
+  }
 }
 
 i32 binplay_init(Binplay* b, const char* path) {
@@ -409,6 +429,7 @@ i32 binplay_init(Binplay* b, const char* path) {
   b->file_cursor = 0;
   b->done = 0;
   b->play = 1;
+  b->show_help = 0;
   b->output_size = g_frames_per_buffer * g_sample_size * g_channel_count;
   b->output = malloc(b->output_size);
   if (!b->output) {
@@ -454,6 +475,10 @@ void binplay_exec(Binplay* b) {
         }
         case KEY_END: {
           b->file_cursor = b->file_size;
+          break;
+        }
+        case KEY_TOGGLE_HELP: {
+          b->show_help = !b->show_help;
           break;
         }
         // Arrow keys
