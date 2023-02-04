@@ -1,0 +1,28 @@
+{
+   type: container
+   id: 0
+   render: false
+   focus: false
+   box: {0, 0, 94, 61}
+   {
+      type: container
+      id: 1
+      render: false
+      focus: false
+      box: {0, 0, 94, 61}
+      {
+         type: container
+         id: 2
+         render: true
+         focus: false
+         box: {2, 2, 90, 57}
+         {
+            type: text
+            id: 3
+            render: true
+            focus: false
+            box: {3, 3, 88, 55}
+         }
+      }
+   }
+}

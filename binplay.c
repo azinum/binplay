@@ -7,35 +7,28 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <termios.h>
 #include <unistd.h> // read
 #include <string.h> // strlen
 #include <assert.h>
 
 #include <portaudio.h>
 
+#include "termgui/termgui.h"
+
 #define PROG "binplay"
 #define CC "gcc"
-#define C_FLAGS "-Wall -O3 -pedantic -lportaudio"
-
-enum Error_code {
-  Error = -1,
-  NoError = 0,
-
-  MAX_ERROR,
-};
+#define C_FLAGS "-O3 -pedantic -lportaudio"
 
 enum Keys {
-  KEY_NONE = 0,
+  KeyNone = 0,
+  KeyExit = 4,
+  KeyEnd = 'e',
+  KeyReset = 'r',
+  KeyToggleLoop = 'l',
+  KeyTogglePause = 32, // Spacebar
+  KeyToggleHelp = '\t',
 
-  KEY_EXIT = 4, // ^D
-  KEY_END = 'e',
-  KEY_RESET = 'r',
-  KEY_TOGGLE_LOOP = 'l',
-  KEY_TOGGLE_PAUSE = 32,  // Space
-  KEY_TOGGLE_HELP = '\t',   // tab
-
-  MAX_KEY,
+  MaxKey,
 };
 
 static const char* key_code_desc[] = {
@@ -73,7 +66,7 @@ static const char* arg_type_desc[MAX_ARG_TYPE] = {
   "buffer",
 };
 
-#define Help (MAX_ERROR + 1)
+#define Help (10)
 
 typedef struct Parse_arg {
   char flag;  // Single char to identify the argument flag
@@ -94,12 +87,14 @@ typedef struct Parse_arg {
 #define SAMPLE_SIZE       2
 #define CHANNEL_COUNT     2
 
+#define INFO_BUFFER_SIZE 512
+
 i32 g_frames_per_buffer = 512;
 i32 g_sample_rate = SAMPLE_RATE;
 i32 g_sample_size = 2;
 i32 g_channel_count = CHANNEL_COUNT;
 f32 g_volume = 1.0f;
-i32 g_cursor_speed = 5 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT;
+i32 g_cursor_speed = 10 * SAMPLE_RATE * SAMPLE_SIZE * CHANNEL_COUNT;
 i32 g_loop_after_complete = 1;
 
 typedef struct Binplay {
@@ -112,6 +107,8 @@ typedef struct Binplay {
   u8 show_help;
   u32 output_size;
   u8* output;
+  char info[INFO_BUFFER_SIZE];
+  f64 time_elapsed;
 } Binplay;
 
 Binplay binplay = {0};
@@ -122,15 +119,17 @@ static void args_print_help(FILE* fp, Parse_arg* args, i32 num_args, i32 argc, c
 static i32 parse_args(Parse_arg* args, i32 num_args, i32 argc, char** argv);
 static i32 rebuild_program();
 static void exec_command(const char* fmt, ...);
-static void clear(i32 fp);
 static void display_info(Binplay* b);
-static i32 binplay_init(Binplay* b, const char* path);
+static Result binplay_init(Binplay* b, const char* path);
 static void binplay_exec(Binplay* b);
 static i32 binplay_process_audio(void* output);
 static i32 stereo_callback(const void* in_buffer, void* out_buffer, unsigned long frames_per_buffer, const PaStreamCallbackTimeInfo* time_info, PaStreamCallbackFlags flags, void* user_data);
-static i32 binplay_open_stream(Binplay* b);
-static i32 binplay_start_stream(Binplay* b);
+static Result binplay_open_stream(Binplay* b);
+static Result binplay_start_stream(Binplay* b);
 static void binplay_exit(Binplay* b);
+
+static void on_update_event(Element* e, void* userdata);
+static void on_input_event(Element* e, void* userdata, const char* input, u32 size);
 
 i32 main(i32 argc, char** argv) {
   if (rebuild_program()) {
@@ -376,14 +375,7 @@ void exec_command(const char* fmt, ...) {
   fclose(fp);
 }
 
-void clear(i32 fp) {
-  const char* clear_code = "\x1b[2J\x1b[H"; // Clear tty and reset cursor
-  i32 write_size = write(STDOUT_FILENO, clear_code, strlen(clear_code));
-  (void)write_size;
-}
-
 void display_info(Binplay* b) {
-  FILE* fp = stdout;
   const char* play_status[2] = {
     "",
     "[paused]",
@@ -392,10 +384,14 @@ void display_info(Binplay* b) {
     "",
     "[looping]",
   };
-  fprintf(fp, "Currently playing: %s %s\n", b->file_name, play_status[b->play == 0]);
-  fprintf(fp, "Cursor: [%i/%i] (%i%%) %s\n", binplay.file_cursor, binplay.file_size, (i32)(100 * ((float)binplay.file_cursor / binplay.file_size)), loop_status[g_loop_after_complete != 0]);
 
-  fprintf(fp,
+  char* buffer = &b->info[0];
+
+  snprintf(
+    buffer,
+    INFO_BUFFER_SIZE,
+    "Currently playing: %s %s\n"
+    "Progress: [%d/%d] (%d%%) %s\n"
     "\n"
     "Volume: %d%%\n"
     "Channel count: %d\n"
@@ -403,24 +399,25 @@ void display_info(Binplay* b) {
     "Sample size: %d\n"
     "Frames per buffer: %d\n"
     ,
-    (i32)(100 * g_volume),
+    b->file_name,
+    play_status[b->play == 0],
+    b->file_cursor,
+    b->file_size,
+    (u32)(100 * (f32)b->file_cursor / b->file_size),
+    loop_status[g_loop_after_complete != 0],
+    (u32)(100 * g_volume),
     g_channel_count,
     g_sample_rate,
     g_sample_size,
     g_frames_per_buffer
   );
-  if (b->show_help) {
-    fprintf(fp, "\nHELP MENU\n");
-    for (u32 i = 0; i < ARR_SIZE(key_code_desc); ++i) {
-      fprintf(fp, "  %s\n", key_code_desc[i]);
-    }
-  }
 }
 
-i32 binplay_init(Binplay* b, const char* path) {
+Result binplay_init(Binplay* b, const char* path) {
+  Result result = NoError;
   if (!(b->fp = fopen(path, "r"))) {
     fprintf(stderr, "Failed to open '%s'\n", path);
-    return Error;
+    return_defer(Error);
   }
   b->file_name = path;
   fseek(b->fp, 0, SEEK_END);
@@ -432,95 +429,62 @@ i32 binplay_init(Binplay* b, const char* path) {
   b->show_help = 0;
   b->output_size = g_frames_per_buffer * g_sample_size * g_channel_count;
   b->output = malloc(b->output_size);
+  memset(b->info, 0, sizeof(b->info));
+  b->time_elapsed = 0.0f;
+
   if (!b->output) {
     b->output_size = 0;
-    return Error;
+    return_defer(Error);
   }
-  return NoError;
+  if (!Ok(tg_init())) {
+    fprintf(stderr, "Failed to initialize termgui: %s\n", tg_err_string());
+    return_defer(Error);
+  }
+defer:
+  return result;
 }
 
 void binplay_exec(Binplay* b) {
-  i32 fd = STDIN_FILENO;
-  struct termios term;
-  tcgetattr(fd, &term);
-  term.c_lflag &= ~(ICANON | ECHO);
-  term.c_cc[VMIN] = 0;
-  term.c_cc[VTIME] = 2;
-  tcsetattr(fd, TCSANOW, &term);
-  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL));
-
-  clear(STDOUT_FILENO);
-  display_info(b);
-
   binplay_start_stream(b);
-  i32 read_size = 0;
+
+  Element* container = NULL;
+  Element* info_text_container = NULL;
+  Element* info_text = NULL;
+
+  Element container_element;
+  tg_container_init(&container_element, false);
+
+  container = tg_attach_element(NULL, &container_element);
+  container->padding = 2;
+  container->focusable = false;
+  container->update_callback = on_update_event;
+  container->input_callback = on_input_event;
+  container->userdata = b;
+
+  Element info_text_container_element;
+  tg_container_init(&info_text_container_element, true);
+
+  info_text_container = tg_attach_element(container, &info_text_container_element);
+  info_text_container->padding = 1;
+  info_text_container->focusable = false;
+
+  Element info_text_element;
+  tg_text_init(&info_text_element, &b->info[0]);
+
+  info_text = tg_attach_element(info_text_container, &info_text_element);
+  info_text->border = false;
+  info_text->focusable = false;
+
+  display_info(b);
   while (!b->done) {
-    char input = 0;
-    read_size = read(fd, &input, 1);
-    if (read_size > 0) {
-      switch (input) {
-        // Spacebar
-        case KEY_TOGGLE_PAUSE: {
-          b->play = !b->play;
-          break;
-        }
-        case KEY_TOGGLE_LOOP: {
-          g_loop_after_complete = !g_loop_after_complete;
-          break;
-        }
-        // Reset to 0
-        case KEY_RESET: {
-          b->file_cursor = 0;
-          break;
-        }
-        case KEY_END: {
-          b->file_cursor = b->file_size;
-          break;
-        }
-        case KEY_TOGGLE_HELP: {
-          b->show_help = !b->show_help;
-          break;
-        }
-        // Arrow keys
-        case 27: {
-          char a[2] = {0};
-          read_size = read(fd, &a[0], 2);
-          if (read_size == 2) {
-            clear(STDOUT_FILENO);
-            if (a[0] == 91) {
-              // Left
-              if (a[1] == 68) {
-                b->file_cursor -= g_cursor_speed;
-              }
-              // Right
-              else if (a[1] == 67) {
-                b->file_cursor += g_cursor_speed;
-              }
-              b->file_cursor = CLAMP(b->file_cursor, 0, (i32)b->file_size);
-              // Up
-              if (a[1] == 65) {
-                g_volume += 0.05f;
-              }
-              // Down
-              else if (a[1] == 66) {
-                g_volume -= 0.05f;
-              }
-              g_volume = CLAMP(g_volume, 0.0f, 1.0f);
-            }
-          }
-          break;
-        }
-        case KEY_EXIT: {
-          b->done = 1;
-          break;
-        }
-        default: {
-          break;
-        }
-      }
+    TIMER_START();
+    if (!Ok(tg_update())) {
+      break;
     }
-    clear(STDOUT_FILENO);
-    display_info(b);
+    tg_render();
+    TIMER_END(
+      b->time_elapsed += _dt;
+    );
   }
 }
 
@@ -531,12 +495,13 @@ i32 stereo_callback(const void* in_buffer, void* out_buffer, unsigned long frame
   return paComplete;
 }
 
-i32 binplay_open_stream(Binplay* b) {
+Result binplay_open_stream(Binplay* b) {
+  Result result = NoError;
   PaError err = Pa_Initialize();
   if (err != paNoError) {
     Pa_Terminate();
     fprintf(stderr, "PortAudio Error: %s\n", Pa_GetErrorText(err));
-    return Error;
+    return_defer(Error);
   }
 
   i32 output_device = Pa_GetDefaultOutputDevice();
@@ -548,7 +513,7 @@ i32 binplay_open_stream(Binplay* b) {
 
   if ((err = Pa_IsFormatSupported(NULL, &output_port, g_sample_rate)) != paFormatIsSupported) {
     fprintf(stderr, "PortAudio Error: %s\n", Pa_GetErrorText(err));
-    return Error;
+    return_defer(Error);
   }
 
   err = Pa_OpenStream(
@@ -564,12 +529,13 @@ i32 binplay_open_stream(Binplay* b) {
   if (err != paNoError) {
     Pa_Terminate();
     fprintf(stderr, "PortAudio Error: %s\n", Pa_GetErrorText(err));
-    return Error;
+    return_defer(Error);
   }
-  return NoError;
+defer:
+  return result;
 }
 
-i32 binplay_start_stream(Binplay* b) {
+Result binplay_start_stream(Binplay* b) {
   PaError err = Pa_StartStream(stream);
   if (err != paNoError) {
     Pa_Terminate();
@@ -617,4 +583,78 @@ void binplay_exit(Binplay* b) {
   b->output_size = 0;
   Pa_CloseStream(stream);
   Pa_Terminate();
+  tg_free();
+  tg_print_error();
+}
+
+void on_update_event(Element* e, void* userdata) {
+  if (!userdata) {
+    return;
+  }
+  Binplay* b = (Binplay*)userdata;
+  if (b->time_elapsed >= 1.0f) {
+    b->time_elapsed = 0.0;
+    display_info(b);
+    tg_refresh();
+  }
+}
+
+void on_input_event(Element* e, void* userdata, const char* input, u32 size) {
+  if (!userdata) {
+    return;
+  }
+  Binplay* b = (Binplay*)userdata;
+  switch (*input) {
+    case KeyTogglePause: {
+      b->play = !b->play;
+      break;
+    }
+    case KeyToggleLoop: {
+      g_loop_after_complete = !g_loop_after_complete;
+      break;
+    }
+    case KeyReset: {
+      b->file_cursor = 0;
+      break;
+    }
+    case KeyEnd: {
+      b->file_cursor = b->file_size;
+      break;
+    }
+    case KeyToggleHelp: {
+      b->show_help = !b->show_help;
+      break;
+    }
+    case 27: {
+      if (size == 3) {
+        ++input;
+        if (input[0] == 91) {
+          ++input;
+          // Left arrow
+          if (*input == 68) {
+            b->file_cursor -= g_cursor_speed;
+          }
+          // Right arrow
+          else if (*input == 67) {
+            b->file_cursor += g_cursor_speed;
+          }
+          b->file_cursor = CLAMP(b->file_cursor, 0, (i32)b->file_size);
+
+          // Down arrow
+          if (*input == 65) {
+            g_volume += 0.05f;
+          }
+          // Up arrow
+          else if (*input == 66) {
+            g_volume -= 0.05f;
+          }
+          g_volume = CLAMP(g_volume, 0.0f, 1.0f);
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  display_info(b);
 }

@@ -1,0 +1,3 @@
+[submodule "termgui"]
+	path = termgui
+	url = https://github.com/Azinum/termgui
