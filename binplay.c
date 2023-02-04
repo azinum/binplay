@@ -117,7 +117,7 @@ i32 main(i32 argc, char** argv) {
     {'v', "volume", "startup volume (values between 0.0 and 1.0 give optimal results)", ArgFloat, 1, &g_volume},
   };
   arg_parser_init(0, 4, 4);
-  i32 result = parse_args(args, ARR_SIZE(args), argc, argv);
+  ParseResult result = parse_args(args, ARR_SIZE(args), argc, argv);
   // TODO(lucas): Try to read from pipe if no filename was specified,
   // and if that fails we exit with a failure code.
   if (!filename) {
@@ -125,7 +125,7 @@ i32 main(i32 argc, char** argv) {
     args_print_help(stderr, args, ARR_SIZE(args), argv);
     return EXIT_FAILURE;
   }
-  if (result == NoError) {
+  if (result == ArgParseOk) {
     Binplay* b = &binplay;
     if (binplay_init(b, filename) == NoError) {
       if (binplay_open_stream(b) == NoError) {
@@ -134,7 +134,7 @@ i32 main(i32 argc, char** argv) {
       binplay_exit(b);
     }
   }
-  else if (result == Error) {
+  else if (result == ArgParseError) {
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;
