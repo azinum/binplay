@@ -1,3 +1,6 @@
 [submodule "termgui"]
 	path = termgui
 	url = https://github.com/Azinum/termgui
+[submodule "arg_parser"]
+	path = arg_parser
+	url = https://github.com/Azinum/arg_parser
