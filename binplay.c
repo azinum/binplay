@@ -405,7 +405,7 @@ void on_update_event(Element* e, void* userdata) {
   if (b->time_elapsed >= 1.0f) {
     b->time_elapsed = 0.0;
     display_info(b);
-    tg_refresh();
+    vm_push_ins(I_RENDER_EVENT);
   }
 }
 
