@@ -89,6 +89,8 @@ Binplay binplay = {0};
 PaStream* stream = NULL;
 PaStreamParameters output_port;
 
+inline void spin_wait();
+
 static i32 rebuild_program();
 static void exec_command(const char* fmt, ...);
 static void display_info(Binplay* b);
@@ -138,6 +140,10 @@ i32 main(i32 argc, char** argv) {
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;
+}
+
+void spin_wait() {
+  sleep(0);
 }
 
 // Compare modify dates between executable and source file
@@ -285,6 +291,7 @@ void binplay_exec(Binplay* b) {
       break;
     }
     tg_render();
+    spin_wait();
     TIMER_END(
       b->time_elapsed += _dt;
     );
