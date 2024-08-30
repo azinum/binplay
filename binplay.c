@@ -215,13 +215,13 @@ void display_info(Binplay* b) {
 
   char* buffer = &b->info[0];
 
-  int seconds = (b->file_cursor / (f32)SAMPLE_SIZE) / (SAMPLE_RATE * CHANNEL_COUNT);
+  int seconds = (b->file_cursor / (f32)g_sample_size) / (g_sample_rate * g_channel_count);
   int minutes = (int)(seconds / 60.0f);
   int hours   = (int)(minutes / 60.0f);
   seconds %= 60;
   minutes %= 60;
 
-  int seconds_total = (b->file_size / (f32)SAMPLE_SIZE) / (SAMPLE_RATE * CHANNEL_COUNT);
+  int seconds_total = (b->file_size / (f32)g_sample_size) / (g_sample_rate * g_channel_count);
   int minutes_total = (int)(seconds_total / 60.0f);
   int hours_total   = (int)(minutes_total / 60.0f);
   seconds_total %= 60;
