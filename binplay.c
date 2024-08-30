@@ -63,6 +63,9 @@ typedef uint8_t u8;
 
 #define INFO_BUFFER_SIZE 512
 
+// skip first 44 bytes when loading wav files (minimal length of wavefront header)
+#define SKIP_44
+
 i32 g_frames_per_buffer = 512;
 i32 g_sample_rate = SAMPLE_RATE;
 i32 g_sample_size = 2;
@@ -76,6 +79,7 @@ typedef struct Binplay {
   const char* file_name;
   u32 file_size;
   i32 file_cursor;
+  i32 file_cursor_start_pos;
   u8 done;
   u8 play;
   u8 show_help;
@@ -93,6 +97,7 @@ inline void spin_wait();
 
 static i32 rebuild_program();
 static void exec_command(const char* fmt, ...);
+static char* file_extension(const char* path);
 static void display_info(Binplay* b);
 static Result binplay_init(Binplay* b, const char* path);
 static void binplay_exec(Binplay* b);
@@ -184,6 +189,20 @@ void exec_command(const char* fmt, ...) {
   fclose(fp);
 }
 
+char* file_extension(const char* path) {
+  char* result = (char*)path;
+  for (;;) {
+    char ch = *path++;
+    if (ch == 0) {
+      return result;
+    }
+    if (ch == '.') {
+      return (char*)path - 1;
+    }
+  }
+  return result;
+}
+
 void display_info(Binplay* b) {
   const char* play_status[2] = {
     "",
@@ -196,11 +215,23 @@ void display_info(Binplay* b) {
 
   char* buffer = &b->info[0];
 
+  int seconds = (b->file_cursor / (f32)SAMPLE_SIZE) / (SAMPLE_RATE * CHANNEL_COUNT);
+  int minutes = (int)(seconds / 60.0f);
+  int hours   = (int)(minutes / 60.0f);
+  seconds %= 60;
+  minutes %= 60;
+
+  int seconds_total = (b->file_size / (f32)SAMPLE_SIZE) / (SAMPLE_RATE * CHANNEL_COUNT);
+  int minutes_total = (int)(seconds_total / 60.0f);
+  int hours_total   = (int)(minutes_total / 60.0f);
+  seconds_total %= 60;
+  minutes_total %= 60;
+
   snprintf(
     buffer,
     INFO_BUFFER_SIZE,
     "Currently playing: %s %s\n"
-    "Progress: [%d/%d] (%d%%) %s\n"
+    "Progress: [%02d:%02d:%02d - %02d:%02d:%02d] (%d%%) %s\n"
     "\n"
     "Volume: %d%%\n"
     "Channel count: %d\n"
@@ -210,8 +241,8 @@ void display_info(Binplay* b) {
     ,
     b->file_name,
     play_status[b->play == 0],
-    b->file_cursor,
-    b->file_size,
+    hours, minutes, seconds,
+    hours_total, minutes_total, seconds_total,
     (u32)(100 * (f32)b->file_cursor / b->file_size),
     loop_status[g_loop_after_complete != 0],
     (u32)(100 * g_volume),
@@ -228,11 +259,20 @@ Result binplay_init(Binplay* b, const char* path) {
     fprintf(stderr, "Failed to open '%s'\n", path);
     return_defer(Error);
   }
+  char* ext = file_extension(path);
+
   b->file_name = path;
   fseek(b->fp, 0, SEEK_END);
   b->file_size = ftell(b->fp);
   fseek(b->fp, 0, SEEK_SET);
   b->file_cursor = 0;
+  b->file_cursor_start_pos = 0;
+#ifdef SKIP_44
+  if (b->file_size > 44 && strncmp(ext, ".wav", MAX_FILE_SIZE) == 0) {
+    b->file_cursor = 44;
+    b->file_cursor_start_pos = b->file_cursor;
+  }
+#endif
   b->done = 0;
   b->play = 1;
   b->show_help = 0;
@@ -370,7 +410,7 @@ i32 binplay_process_audio(void* output) {
     b->file_cursor += g_frames_per_buffer * g_sample_size * g_channel_count;
     if (bytes_read < bytes_to_read || b->file_cursor >= b->file_size) {
       if (g_loop_after_complete) {
-        b->file_cursor = 0;
+        b->file_cursor = b->file_cursor_start_pos;
       }
       else {
         b->file_cursor = b->file_size;
